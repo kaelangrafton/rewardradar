@@ -3,6 +3,8 @@ const bodyParser = require('body-parser');
 const path = require('path');
 const BrowserManager = require('./browserManager');
 const MockAirlineScraper = require('./mockAirlineScraper');
+const BritishAirwaysScraper = require('./britishAirwaysScraper');
+const DataStandardizer = require('./dataStandardizer');
 
 const app = express();
 const PORT = 3000;
@@ -10,6 +12,7 @@ const PORT = 3000;
 // Initialize browser manager and scrapers
 let browserManager;
 let scrapers = [];
+let dataStandardizer;
 
 async function initializeScrapers() {
     console.log('Initializing browser automation...');
@@ -17,26 +20,30 @@ async function initializeScrapers() {
     browserManager = new BrowserManager();
     await browserManager.initialize();
     
-    // Create mock scrapers for testing
+    dataStandardizer = new DataStandardizer();
+    
+    // Create mix of real and mock scrapers
     scrapers = [
+        // Real airline scraper
+        new BritishAirwaysScraper(browserManager, {
+            timeout: 60000, // Longer timeout for real scraper
+            maxRetries: 2    // Fewer retries to avoid being blocked
+        }),
+        
+        // Mock scrapers for testing and comparison
         new MockAirlineScraper(browserManager, { 
-            name: 'MockAirline1', 
+            name: 'Emirates (Demo)', 
             failureRate: 0.1,
-            responseTime: { min: 1000, max: 3000 }
+            responseTime: { min: 2000, max: 4000 }
         }),
         new MockAirlineScraper(browserManager, { 
-            name: 'MockAirline2', 
-            failureRate: 0.2,
-            responseTime: { min: 2000, max: 5000 }
-        }),
-        new MockAirlineScraper(browserManager, { 
-            name: 'MockAirline3', 
+            name: 'Qatar Airways (Demo)', 
             failureRate: 0.15,
-            responseTime: { min: 1500, max: 4000 }
+            responseTime: { min: 1500, max: 3500 }
         })
     ];
     
-    console.log(`Initialized ${scrapers.length} mock airline scrapers`);
+    console.log(`Initialized ${scrapers.length} airline scrapers (${scrapers.filter(s => s.name === 'British Airways').length} real, ${scrapers.length - 1} mock)`);
 }
 
 app.use(express.static('.'));
@@ -128,30 +135,40 @@ app.post('/api/search-stream', async (req, res) => {
                     const result = await scraper.executeWithRetry(searchParams);
                     
                     if (result.success && result.data.length > 0) {
-                        const cheapestFlight = result.data[0];
-                        const price = cheapestFlight.price.total || `${Math.floor(cheapestFlight.price.points / 1000)}k`;
+                        // Standardize the data
+                        const standardizedResults = result.data.map(flight => 
+                            dataStandardizer.standardizeFlightResult(flight, scraper.name)
+                        ).filter(flight => flight !== null);
                         
-                        // Check if this is better than existing result for this date combo
-                        const existingResult = results.get(dateCombo.key);
-                        if (!existingResult || shouldUpdatePrice(price, existingResult.price)) {
-                            results.set(dateCombo.key, {
-                                key: dateCombo.key,
-                                price: price,
-                                airline: scraper.name,
-                                outbound: dateCombo.outboundStr,
-                                return: dateCombo.returnStr,
-                                fullData: result.data[0]
-                            });
+                        if (standardizedResults.length > 0) {
+                            const cheapestFlight = standardizedResults[0];
+                            const price = cheapestFlight.pricing?.total?.display || 'Price not available';
                             
-                            // Send real-time update
-                            res.write(`data: ${JSON.stringify({
-                                type: 'result-update',
-                                key: dateCombo.key,
-                                price: price,
-                                airline: scraper.name,
-                                outbound: dateCombo.outboundStr,
-                                return: dateCombo.returnStr
-                            })}\n\n`);
+                            // Check if this is better than existing result for this date combo
+                            const existingResult = results.get(dateCombo.key);
+                            if (!existingResult || shouldUpdatePrice(price, existingResult.price)) {
+                                results.set(dateCombo.key, {
+                                    key: dateCombo.key,
+                                    price: price,
+                                    airline: scraper.name,
+                                    outbound: dateCombo.outboundStr,
+                                    return: dateCombo.returnStr,
+                                    fullData: cheapestFlight,
+                                    standardized: true
+                                });
+                                
+                                // Send real-time update
+                                res.write(`data: ${JSON.stringify({
+                                    type: 'result-update',
+                                    key: dateCombo.key,
+                                    price: price,
+                                    airline: scraper.name,
+                                    outbound: dateCombo.outboundStr,
+                                    return: dateCombo.returnStr,
+                                    points: cheapestFlight.pricing?.points?.amount,
+                                    standardized: true
+                                })}\n\n`);
+                            }
                         }
                     }
                     
@@ -206,13 +223,35 @@ app.post('/api/search-stream', async (req, res) => {
 });
 
 function shouldUpdatePrice(newPrice, existingPrice) {
-    // Simple price comparison - extract numbers from price strings like "75k"
+    // Enhanced price comparison for standardized data
     const extractPoints = (price) => {
+        if (!price) return Infinity;
+        
+        // Handle standardized format with points
         const match = price.match(/(\d+)k/);
-        return match ? parseInt(match[1]) : Infinity;
+        if (match) {
+            return parseInt(match[1]) * 1000;
+        }
+        
+        // Handle raw points format
+        const pointsMatch = price.match(/(\d+(?:,\d+)?)\s*(?:points?|avios)/i);
+        if (pointsMatch) {
+            return parseInt(pointsMatch[1].replace(/,/g, ''));
+        }
+        
+        // Handle numeric strings
+        const numMatch = price.match(/(\d+)/);
+        if (numMatch) {
+            return parseInt(numMatch[1]);
+        }
+        
+        return Infinity;
     };
     
-    return extractPoints(newPrice) < extractPoints(existingPrice);
+    const newPoints = extractPoints(newPrice);
+    const existingPoints = extractPoints(existingPrice);
+    
+    return newPoints < existingPoints;
 }
 
 // Keep the original endpoint for backward compatibility
