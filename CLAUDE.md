@@ -4,16 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-RewardRadar is a new project that has not yet been initialized. The project directory is currently empty.
+RewardRadar is a flight search tool that helps users find award flights across multiple airlines using a 7x7 date grid interface. The project uses browser automation to scrape airline websites and display results in real-time.
 
 ## Development Setup
 
-This project needs to be initialized. Common setup steps would include:
-
-1. Initialize package.json: `npm init`
-2. Install dependencies based on chosen tech stack
-3. Set up project structure
-4. Configure build tools and linters
+Follow the detailed implementation plan in `prompt_plan.md` which outlines 11 progressive development phases.
 
 ## Commands
 
@@ -21,10 +16,16 @@ This project needs to be initialized. Common setup steps would include:
 
 ## Architecture
 
-*To be documented once project structure is established*
+- **Frontend**: HTML/CSS/JS with date grid component and progressive loading
+- **Backend**: Node.js/Express with Server-Sent Events for real-time updates  
+- **Scraping**: Puppeteer/Playwright with base scraper class and airline-specific implementations
+- **Data Flow**: Parallel airline searches → progressive results → grid updates
 
-## Notes
+## Development Guidelines
 
-- Project is in initial setup phase
-- Technology stack not yet determined
-- This file should be updated with specific commands and architecture details once development begins
+- Follow iterative development approach from prompt_plan.md
+- Implement robust error handling and retry logic for all scrapers
+- Use base classes and standardized data formats across airlines
+- Prioritize reliability over speed - airline websites are fragile
+- Test each airline scraper thoroughly before adding new ones
+- Implement proper rate limiting and anti-detection measures
